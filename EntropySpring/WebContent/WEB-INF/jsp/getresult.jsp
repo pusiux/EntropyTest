@@ -2,13 +2,13 @@
 <%@ taglib prefix="c" uri="http://java.sun.com/jsp/jstl/core" %>
 <html>
 <head>
-<title>Hello World</title>
+<title>Entropy result</title>
 </head>
 <body>
    <h2>${message}</h2>
    
  <c:forEach var="map" items="${myMap}">
-    Key: ${map.key} Value: ${map.value}
+    Password: ${map.key} Entropy: ${map.value}
     <br />
 </c:forEach>
 

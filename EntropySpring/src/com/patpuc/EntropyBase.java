@@ -1,89 +1,118 @@
 package com.patpuc;
 
-import java.io.BufferedReader;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
-import java.nio.charset.Charset;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.StringTokenizer;
-import java.util.TreeMap;
 
-import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.DoubleWritable;
 import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.io.Text;
-import org.apache.hadoop.mapreduce.Mapper;
+import org.apache.hadoop.mapred.FileInputFormat;
+import org.apache.hadoop.mapred.FileOutputFormat;
+import org.apache.hadoop.mapred.JobClient;
+import org.apache.hadoop.mapred.JobConf;
+import org.apache.hadoop.mapred.MapReduceBase;
+import org.apache.hadoop.mapred.Mapper;
+import org.apache.hadoop.mapred.OutputCollector;
+import org.apache.hadoop.mapred.Reducer;
+import org.apache.hadoop.mapred.Reporter;
+import org.apache.hadoop.mapred.SequenceFileOutputFormat;
+import org.apache.hadoop.mapred.TextInputFormat;
 
-public class EntropyBase extends Mapper<LongWritable, Text, Text, IntWritable> {
-	private Text password = new Text();
-	static List<String> pass = new ArrayList<String>();
-	static HashMap<String, Double> unsortedMap = new HashMap<String, Double>();
-	static ValueComparator bvc = new ValueComparator(unsortedMap);
-	static TreeMap<String, Double> sortedMap = new TreeMap<String, Double>(bvc);
+public class EntropyBase {
 
-	public static void main(String[] args) throws FileNotFoundException, IOException {
-		System.out.println("***** START *****");
-		PrintWriter writerToFile = new PrintWriter("/home/pusiux/Desktop/passwordsWithEntropy.txt");
-		System.out.println("***** START2 *****");
+	public static void main(String args[]) throws Exception {
+		Configuration conf = new Configuration();
+		conf.set("fs.default.name", "hdfs://localhost:9000");
+		conf.addResource(new Path("/home/pusiux/hadoop-2.6.1/etc/hadoop/core-site.xml"));
+		conf.addResource(new Path("/home/pusiux/hadoop-2.6.1/etc/hadoop/hdfs-site.xml"));
+		FileSystem fs = FileSystem.get(conf);
 
-		readFromFileToList();
-		System.out.println("***** START3 *****");
+		Path inputPath = new Path("hdfs://localhost:9000/user/pusiux/input");
+		fs.delete(new Path("hdfs://localhost:9000/user/pusiux/output"), true);
+		Path outputPath = new Path("hdfs://localhost:9000/user/pusiux/output");
 
-		writeEntropyToMap(pass);
-		System.out.println("***** START4 *****");
+		JobConf job = new JobConf(conf);
+		job.setJobName("Entropy");
 
-		sortedMap.putAll(unsortedMap);
-		System.out.println("***** START5 *****");
+		job.setOutputKeyClass(Text.class);
+		job.setOutputValueClass(DoubleWritable.class);
 
-		for (Map.Entry<String, Double> entry : sortedMap.entrySet()) {
-			writerToFile.println(entry.getKey() + " " + entry.getValue());
-		}
-		writerToFile.close();
-		System.out.println("***** SZTOP *****");
+		job.setMapperClass(EntropyMapper.class);
+		job.setReducerClass(EntropyReduce.class);
 
+		job.setInputFormat(TextInputFormat.class);
+		job.setOutputFormat(SequenceFileOutputFormat.class);
+
+		FileInputFormat.setInputPaths(job, inputPath);
+		FileOutputFormat.setOutputPath(job, outputPath);
+		job.setJarByClass(EntropyBase.class);
+		JobClient.runJob(job);
 	}
 
-	
+	public static class EntropyMapper extends MapReduceBase
+			implements Mapper<LongWritable, Text, Text, DoubleWritable> {
+		private final DoubleWritable one = new DoubleWritable(1);
+		private Text word = new Text();
 
-	public static void readFromFileToList() throws FileNotFoundException, IOException {
-		String line;
-		int i = 0;
-		try (InputStream fis = new FileInputStream("/home/pusiux/Desktop/passwords.txt");
-				InputStreamReader isr = new InputStreamReader(fis, Charset.forName("UTF-8"));
-				BufferedReader br = new BufferedReader(isr);) {
-			while ((line = br.readLine()) != null) {
-				if (line.length() > 0) {
-					i++;
-					pass.add(line);
-					System.out.println(i);
-				}
+		@Override
+		public void map(LongWritable longWritable, Text text, OutputCollector<Text, DoubleWritable> outputCollector,
+				Reporter reporter) throws IOException {
+			String line = text.toString();
+			StringTokenizer stringTokenizer = new StringTokenizer(line);
+			outputCollector.collect(word, one);
+			while (stringTokenizer.hasMoreTokens()) {
+				word.set(stringTokenizer.nextToken());
+				if (word.getLength() > 0)
+					outputCollector.collect(word, one);
 			}
 		}
 	}
 
-	public static void writeEntropyToMap(List<String> pass) throws FileNotFoundException {
+	public static class EntropyReduce extends MapReduceBase
+			implements Reducer<Text, DoubleWritable, Text, DoubleWritable> {
+
+		@Override
+		public void reduce(Text text, Iterator<DoubleWritable> iterator,
+				OutputCollector<Text, DoubleWritable> outputCollector, Reporter reporter) throws IOException {
+			double res = 0.0;
+			res = prepareStringToCalcEntropy(text);
+			outputCollector.collect(text, new DoubleWritable(res));
+
+		}
+	}
+
+	/*
+	 * 
+	 * check and fix hint : don't add to list, cut string.
+	 */
+	public static Double prepareStringToCalcEntropy(Text text) {
+
+		List<String> list = new LinkedList<>();
+		double res = 0.0;
+		if (text.getLength() > 0)
+			list.add(text.toString());
 		List<String> passTmp = new ArrayList<String>();
-		Double result = 0.0;
-		for (int j = 0; j < pass.size(); j++) {
-			System.out.println(j);
+		for (int j = 0; j < list.size(); j++) {
 
-			for (int i = 0; i < pass.get(j).length(); i++) {
-				passTmp.add(String.valueOf(pass.get(j).charAt(i)));
+			for (int i = 0; i < list.get(j).length(); i++) {
+				passTmp.add(String.valueOf(list.get(j).charAt(i)));
 			}
-			result = calculateShannonEntropy(passTmp);
-			unsortedMap.put(pass.get(j), result);
-			result = 0.0;
+			res = calculateEntropy(passTmp);
+
 		}
+		return res;
 	}
 
-	public static Double calculateShannonEntropy(List<String> values) {
+	public static Double calculateEntropy(List<String> values) {
 		Map<String, Integer> map = new HashMap<String, Integer>();
 		// count the occurrences of each value
 		for (String sequence : values) {
@@ -101,23 +130,4 @@ public class EntropyBase extends Mapper<LongWritable, Text, Text, IntWritable> {
 		}
 		return result;
 	}
-}
-
-class ValueComparator implements Comparator<String> {
-	Map<String, Double> base;
-
-	public ValueComparator(Map<String, Double> base) {
-		this.base = base;
-	}
-
-	// Note: this comparator imposes orderings that are inconsistent with
-	// equals.
-	public int compare(String a, String b) {
-		if (base.get(b) <= base.get(a)) {
-			return -1;
-		} else {
-			return 1;
-		} // returning 0 would merge keys
-	}
-
 }
